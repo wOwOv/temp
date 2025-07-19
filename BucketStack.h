@@ -79,7 +79,6 @@ public:
 			newtop = realadr->_next;
 			retptr = realadr->_data;
 		} while (InterlockedCompareExchange64((__int64*)&_top, (__int64)newtop, (__int64)oldtop) != (__int64)oldtop);
-		InterlockedDecrement(&_num);
 
 		_bucketpool.Free(realadr);
 		return retptr;

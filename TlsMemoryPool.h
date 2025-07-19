@@ -137,7 +137,7 @@ public:
 			}
 
 			tpool->_nodeCount = _maxcount;
-			tpool->_storedCount = _maxcount;
+			tpool->_storedCount = tpool->_nodeCount+tpool->_freeCount;
 
 			TlsSetValue(_tlsIndex, (LPVOID)tpool);
 		}
@@ -187,7 +187,7 @@ public:
 					new(&(allocated->_data)) DATA;
 				}
 				tpool->_nodeCount =  _bunchsize - 1;
-
+				tpool->_storedCount = tpool->_nodeCount + tpool->_freeCount;
 			}
 			//공용풀에서도 못 받아왔음
 			else
@@ -279,6 +279,7 @@ public:
 			retnode->_next = tpool->_nodelist;
 			tpool->_nodelist = retnode;
 			tpool->_nodeCount++;
+			tpool->_storedCount++;
 		}
 		//nodelist에 자리가 없다면 freelist로
 		else

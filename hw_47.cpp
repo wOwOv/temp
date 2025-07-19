@@ -72,7 +72,7 @@ unsigned int __stdcall WorkerThread0(LPVOID arg)
     while (1)
     {
 
-            for (int i = 0; i < 100; i++)
+            for (int i = 0; i < 10000; i++)
             {
                 TestDATA* data = new TestDATA;
                 data->data = i;
@@ -93,7 +93,7 @@ unsigned int __stdcall WorkerThread1(LPVOID arg)
     {
         
 
-            for (int i = 0; i < 100; i++)
+            for (int i = 0; i < 10000; i++)
             {
                 TestDATA* data=nullptr;
                 lfstack.Pop(&data);
