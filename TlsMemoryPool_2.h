@@ -11,9 +11,11 @@ class TlsMemoryPool
 private:
 	const unsigned long long ADRMASK = 0x0000ffffffffffff;
 
+	struct Bucket;
+
 	struct Node
 	{
-		Node* _retbucket;
+		Bucket* _retbucket;
 		int _underguard;
 		DATA _data;
 		int _overguard;
@@ -49,8 +51,8 @@ public:
 	}
 	~TlsMemoryPool()
 	{
-		TlsPool* tpool = (TlsPool*)TlsGetValue(_tlsIndex);
-		if (tpool == nullptr)
+		Bucket* bucket = (Bucket*)TlsGetValue(_tlsIndex);
+		if (bucket == nullptr)
 		{
 			DebugBreak();
 		}
@@ -72,7 +74,7 @@ public:
 			long size = InterlockedDecrement(&_num);
 			if (size < 0)
 			{
-				InterlockedIncrement(&num);
+				InterlockedIncrement(&_num);
 
 				//내가 할당
 				bucket = new Bucket;
@@ -94,7 +96,7 @@ public:
 			}
 			else
 			{
-				Bucket* oldtop;
+				Bucket* oldtop=nullptr;
 				Bucket* newtop;
 				Bucket* realadr;
 				unsigned long long tempadr;
@@ -102,7 +104,7 @@ public:
 				{
 					tempadr = (unsigned long long)oldtop;
 					tempadr &= ADRMASK;
-					realadr = (Node*)tempadr;
+					realadr = (Bucket*)tempadr;
 					newtop = realadr->_next;
 				} while (InterlockedCompareExchange64((__int64*)&_top, (__int64)newtop, (__int64)oldtop) != (__int64)oldtop);
 
@@ -157,13 +159,13 @@ public:
 		}
 
 		Bucket* freebucket = retnode->_retbucket;
-		if (InterlockedIncrement(&freebucket->_retunrCount) == _bunchsize)
+		if (InterlockedIncrement(&freebucket->_returnCount) == _bunchsize)
 		{
 			//BucketPool에 반환
 			unsigned long long tagbucket = (unsigned long long)freebucket;
-			unsigned long long tag = InterlockedIncrement(&_key);
+			unsigned long long tag = InterlockedIncrement16(&_key);
 			tagbucket |= (tag << 48);
-			Node* oldtop;
+			Bucket* oldtop;
 			do
 			{
 				oldtop = _top;

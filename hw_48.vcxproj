@@ -138,6 +138,7 @@
     <ClInclude Include="LockFreeQueue.h" />
     <ClInclude Include="MemoryPool.h" />
     <ClInclude Include="TlsMemoryPool.h" />
+    <ClInclude Include="TlsMemoryPool_2.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

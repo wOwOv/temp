@@ -1,7 +1,7 @@
 #ifndef __LOCKFREEQUEUE__
 #define __LOCKFREEQUEUE__
 
-#include "MemoryPool.h"
+#include "TlsMemoryPool_2.h"
 
 #define ADRMASK 0x0000ffffffffffff;
 #define TAGMASK 0xffff000000000000;
@@ -183,7 +183,7 @@ public:
 private:
 	Node* _head;
 	Node* _tail;
-	MemoryPool<Node> _nodepool;
+	TlsMemoryPool<Node> _nodepool;
 
 	long _size = 0;
 };
