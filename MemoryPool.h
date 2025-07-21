@@ -1,3 +1,21 @@
+/*
+
+	procademy MemoryPool.
+
+	메모리 풀 클래스 (오브젝트 풀 / 프리리스트)
+	특정 데이타(구조체,클래스,변수)를 일정량 할당 후 나눠쓴다.
+
+	- 사용법.
+
+	procademy::CMemoryPool<DATA> MemPool(300, FALSE);
+	DATA *pData = MemPool.Alloc();
+
+	pData 사용
+
+	MemPool.Free(pData);
+
+
+----------------------------------------------------------------*/
 #ifndef  __MEMORYPOOL__
 #define  __MEMORYPOOL__
 #include <new.h>
@@ -11,16 +29,12 @@ template <class DATA>
 class MemoryPool
 {
 private:
-	const unsigned long long ADRMASK = 0x0000ffffffffffff;
-	const unsigned long long TAGMASK = 0xffff000000000000;
-	const unsigned long long MAKETAG = 0x0001000000000000;
-
-	struct Node
+	struct NODE
 	{
 		int _underguard;
 		DATA _data;
 		int _overguard;
-		Node* _next;
+		NODE* _next;
 	};
 
 
@@ -44,7 +58,7 @@ public:
 
 		_key = 0;
 
-		Node* node = new Node;
+		NODE* node = new NODE;
 		_position = (long long)&node->_data - (long long)&node->_underguard;
 		delete node;
 
@@ -53,7 +67,7 @@ public:
 		{
 			for (int i = 0; i < BlockNum; i++)
 			{
-				Node* node = new Node;
+				NODE* node = new NODE;
 				node->_underguard = _cookie;
 				node->_overguard = _cookie;
 
@@ -65,7 +79,7 @@ public:
 		{
 			for (int i = 0; i < BlockNum; i++)
 			{
-				Node* node = (Node*)malloc(sizeof(Node));
+				NODE* node = (NODE*)malloc(sizeof(NODE));
 				node->_underguard = _cookie;
 				node->_overguard = _cookie;
 
@@ -82,8 +96,8 @@ public:
 	}
 	virtual	~MemoryPool()
 	{
-		Node* node = _head;
-		Node* temp = node;
+		NODE* node = _head;
+		NODE* temp = node;
 		//이미 생성자 호출되어있는 상태로 들어있음. 소멸자 호출 되어야함
 		if (_pnFlag == 0)
 		{
@@ -91,11 +105,8 @@ public:
 			{
 				if (node != nullptr)
 				{
-					unsigned long long tempadr = (unsigned long long)node;
-					tempadr &= ADRMASK;
-					Node* realadr = (Node*)tempadr;
-					temp = realadr->_next;
-					delete realadr;
+					temp = node->_next;
+					delete node;
 					node = temp;
 				}
 				else
@@ -110,11 +121,8 @@ public:
 			{
 				if (node != nullptr)
 				{
-					unsigned long long tempadr = (unsigned long long)node;
-					tempadr &= ADRMASK;
-					Node* realadr = (Node*)tempadr;
-					temp = realadr->_next;
-					free(realadr);
+					temp = node->_next;
+					free(node);
 					node = temp;
 				}
 				else
@@ -133,10 +141,10 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 	DATA* Alloc(void)
 	{
-		Node* allocated;
-		Node* oldhead;
-		Node* newhead;
-		Node* realadr;
+		NODE* allocated;
+		NODE* oldhead;
+		NODE* newhead;
+		NODE* realadr;
 		unsigned long long tempadr;
 		do
 		{
@@ -150,7 +158,7 @@ public:
 						return nullptr;
 					}
 				}
-				allocated = new Node;
+				allocated = new NODE;
 				allocated->_underguard = _cookie;
 				allocated->_overguard = _cookie;
 				realadr = allocated;
@@ -159,8 +167,9 @@ public:
 			}
 
 			tempadr = (unsigned long long)oldhead;
-			tempadr &= ADRMASK;
-			realadr = (Node*)tempadr;
+			tempadr <<= 16;
+			tempadr >>= 16;
+			realadr = (NODE*)tempadr;
 			newhead = realadr->_next;
 		} while (InterlockedCompareExchange64((__int64*)&_head, (__int64)newhead, (__int64)oldhead) != (__int64)oldhead);
 		allocated = realadr;
@@ -169,6 +178,7 @@ public:
 		{
 			new(&(allocated->_data)) DATA;
 		}
+
 
 		InterlockedIncrement(&_usingCount);
 
@@ -186,7 +196,7 @@ public:
 		//노드할당 주소 찾기
 		char* address = (char*)data;
 		address -= _position;
-		Node* retnode = (Node*)address;
+		NODE* retnode = (NODE*)address;
 
 		//언더.오버플로우 확인 겸 맞는 요소가 들어왔는지 확인
 		if (retnode->_underguard != _cookie || retnode->_overguard != _cookie)
@@ -201,21 +211,18 @@ public:
 			retnode->_data.~DATA();
 		}
 
+		unsigned long long temp = InterlockedIncrement16(&_key);
 		unsigned long long countnode = (unsigned long long)retnode;
-		countnode &= ADRMASK;
-		Node* oldhead;
+		countnode |= (temp << 48);
+		NODE* oldhead;
 		do
 		{
 			oldhead = _head;
-			unsigned long long tag = (unsigned long long)oldhead;
-			tag &= TAGMASK;
-			tag += MAKETAG;
-			countnode |= tag;
 			retnode->_next = oldhead;
 		} while (InterlockedCompareExchange64((__int64*)&_head, (__int64)countnode, (__int64)oldhead) != (__int64)oldhead);
 
-		InterlockedDecrement(&_usingCount);
 
+		InterlockedDecrement(&_usingCount);
 		return true;
 	}
 
@@ -252,10 +259,10 @@ public:
 
 
 private:
-	Node* _head;
-	unsigned long _cookie;
-	unsigned long _capacity;
-	unsigned long _usingCount;
+	NODE* _head;
+	int _cookie;
+	unsigned int _capacity;
+	unsigned int _usingCount;
 	bool _pnFlag;
 
 	long long _position;
@@ -264,7 +271,6 @@ private:
 	bool _maxFlag;
 
 	short _key;
-
 };
 
 
@@ -275,5 +281,7 @@ private:
 
 
 
+
+
+
 #endif
-#pragma once

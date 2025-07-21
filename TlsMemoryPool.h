@@ -15,6 +15,7 @@ private:
 		DATA _data;
 		int _overguard;
 		Node* _next;
+		Node* _bucketnext;
 	};
 	struct TlsPool
 	{
@@ -37,7 +38,7 @@ public:
 			DebugBreak();
 		}
 
-		_cookie = _bucketstack.GetCommoncookie();
+		_cookie = _bucketstack.GetCommonCookie();
 	
 		Node* node = new Node;
 		_position = (long long)&node->_data - (long long)&node->_underguard;
@@ -153,7 +154,6 @@ public:
 				new(&(allocated->_data)) DATA;
 			}
 			tpool->_nodeCount--;
-			tpool->_storedCount--;
 		}
 		//내 노드는 없고 반환하려고 보관해둔 노드가 있다면
 		else if (tpool->_freeCount > 0)
@@ -166,7 +166,6 @@ public:
 				new(&(allocated->_data)) DATA;
 			}
 			tpool->_freeCount--;
-			tpool->_storedCount--;
 		}
 		//공용풀에서 받아와야한다면
 		else
@@ -187,7 +186,6 @@ public:
 					new(&(allocated->_data)) DATA;
 				}
 				tpool->_nodeCount =  _bunchsize - 1;
-				tpool->_storedCount = tpool->_nodeCount + tpool->_freeCount;
 			}
 			//공용풀에서도 못 받아왔음
 			else
@@ -199,6 +197,7 @@ public:
 			}
 			
 		}
+		tpool->_storedCount = tpool->_nodeCount + tpool->_freeCount;
 
 		return &(allocated->_data);
 	}
@@ -262,7 +261,7 @@ public:
 			}
 
 			tpool->_nodeCount = _maxcount;
-			tpool->_storedCount = _maxcount;
+			tpool->_storedCount = tpool->_nodeCount + tpool->_freeCount;
 
 			TlsSetValue(_tlsIndex, (LPVOID)tpool);
 		}
@@ -279,7 +278,6 @@ public:
 			retnode->_next = tpool->_nodelist;
 			tpool->_nodelist = retnode;
 			tpool->_nodeCount++;
-			tpool->_storedCount++;
 		}
 		//nodelist에 자리가 없다면 freelist로
 		else
@@ -287,7 +285,6 @@ public:
 			retnode->_next = tpool->_freelist;
 			tpool->_freelist = retnode;
 			tpool->_freeCount++;
-			tpool->_storedCount++;
 
 			//freelist가 다 찼다면
 			if (tpool->_freeCount ==  _bunchsize)
@@ -321,8 +318,6 @@ public:
 
 
 private:
-
-
 	int _cookie;
 	long long _position;
 
@@ -334,7 +329,8 @@ private:
 	
 	DWORD _tlsIndex=0;
 
-	BucketStack _bucketstack;				//static 노드버킷 관리 스택
+	BucketStack<DATA> _bucketstack;				//노드버킷 관리 스택
+
 };
 
 

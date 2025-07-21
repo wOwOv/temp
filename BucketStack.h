@@ -1,24 +1,27 @@
 #ifndef __BUCKETSTACK__
 #define __BUCKETSTACK__
 
-#include"MemoryPool.h"
-#include <windows.h>
-
 static unsigned long commoncookie = 0x01010100;
 
+
 //락프리스택
+template <class DATA>
 class BucketStack
 {
-	struct Bucket
-	{
-		void* _data;
-		Bucket* _next;
-	};
 private:
+	struct Node
+	{
+		int _underguard;
+		DATA _data;
+		int _overguard;
+		Node* _next;
+		Node* _bucketnext;
+	}typedef Bucket;
+
 	const unsigned long long ADRMASK = 0x0000ffffffffffff;
 
 public:
-	BucketStack() :_top(nullptr), _num(0), _key(0),_bucketpool(100)
+	BucketStack() :_top(nullptr), _num(0), _key(0)
 	{
 		_commoncookie = InterlockedIncrement(&commoncookie);
 	}
@@ -38,21 +41,19 @@ public:
 		}
 	}
 
-	void ReturnBucket(void* data)
+	void ReturnBucket(void* node)
 	{
-
-		Bucket* newnode = _bucketpool.Alloc();
-		newnode->_data = data;
-		
-		unsigned long long tagnode = (unsigned long long)newnode;
+		Bucket* bucket = (Bucket*)node;
+		unsigned long long tagadr = (unsigned long long)bucket;
 		unsigned long long tag = InterlockedIncrement16(&_key);
-		tagnode |= (tag << 48);
+		tagadr |= (tag << 48);		
+		Bucket* tagbucket = (Bucket*)tagadr;
 		Bucket* oldtop;
 		do
 		{
 			oldtop = _top;
-			newnode->_next = oldtop;
-		} while (InterlockedCompareExchange64((__int64*)&_top, (__int64)tagnode, (__int64)oldtop) != (__int64)oldtop);
+			bucket->_bucketnext = oldtop;
+		} while (InterlockedCompareExchange64((__int64*)&_top, (__int64)tagbucket, (__int64)oldtop) != (__int64)oldtop);
 		InterlockedIncrement(&_num);
 	}
 
@@ -76,11 +77,10 @@ public:
 			tempadr = (unsigned long long)oldtop;
 			tempadr &= ADRMASK;
 			realadr = (Bucket*)tempadr;
-			newtop = realadr->_next;
-			retptr = realadr->_data;
+			newtop = realadr->_bucketnext;
+			retptr = realadr;
 		} while (InterlockedCompareExchange64((__int64*)&_top, (__int64)newtop, (__int64)oldtop) != (__int64)oldtop);
 
-		_bucketpool.Free(realadr);
 		return retptr;
 	}
 
@@ -89,18 +89,16 @@ public:
 		return _num;
 	}
 
-	int GetCommoncookie()
+	int GetCommonCookie()
 	{
 		return _commoncookie;
 	}
 
 private:
-	Bucket* _top;							//head인덱스
-	unsigned long _num;								//보관 중인 Bucket개수
+	Bucket* _top;								//head
+	unsigned long _num;						//보관 중인 Bucket개수
 	short _key;								//tag
 	
-	//Bucket구조체 관리용 메모리풀
-	MemoryPool<Bucket> _bucketpool;
 	int _commoncookie;
 
 };
