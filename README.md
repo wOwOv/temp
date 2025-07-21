@@ -24,3 +24,5 @@ hw_47_6
 
 temp_2
 ㄴ락프리큐+배열형식 tls, 버킷스택 tls
+ ㄴ대권님이 왜 힙 에러 나는지 찾아주심..
+  ㄴ락프리큐에서 _nodepool초기화를 0으로 해서 tlsmemorypool의 _bunchsize가 0이었음...
