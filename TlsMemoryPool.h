@@ -2,12 +2,14 @@
 #define  __TLSMEMORYPOOL__
 #include <new.h>
 #include <windows.h>
-#include "BucketStack.h"
+
+static unsigned long Cookie = 0x01010100;
 
 template <class DATA>
 class TlsMemoryPool
 {
 private:
+	const unsigned long long ADRMASK = 0x0000ffffffffffff;
 
 	struct Node
 	{
@@ -15,7 +17,9 @@ private:
 		DATA _data;
 		int _overguard;
 		Node* _next;
-	};
+		Node* _bunchnext;
+	}typedef Bunch;
+
 	struct TlsPool
 	{
 		Node* _nodelist;
@@ -37,19 +41,23 @@ public:
 			DebugBreak();
 		}
 
-		_cookie = _bucketstack.GetCommoncookie();
+		_cookie = InterlockedIncrement(&Cookie);
 	
 		Node* node = new Node;
 		_position = (long long)&node->_data - (long long)&node->_underguard;
 		delete node;
 
 		_pnFlag = PlacementNew;
-		_maxcount = BlockNum;
+		_maxCount = BlockNum;
 		_maxFlag = maxflag;
 
-		_bunchsize = bunchsize;
+		_bunchSize = bunchsize;
 
+		_usingCount = 0;
 
+		_top = nullptr;
+		_bunchCount=0;
+		_key = 0;
 
 	}
 	~TlsMemoryPool()
@@ -113,7 +121,7 @@ public:
 			//생성자 호출한 상태로 들어가야함
 			if (_pnFlag == 0)
 			{
-				for (int i = 0; i < _maxcount; i++)
+				for (int i = 0; i < _maxCount; i++)
 				{
 					Node* node = new Node;
 					node->_underguard = _cookie;
@@ -125,7 +133,7 @@ public:
 			}
 			else//생성자 호출 없이 들어가야함
 			{
-				for (int i = 0; i < _maxcount; i++)
+				for (int i = 0; i < _maxCount; i++)
 				{
 					Node* node = (Node*)malloc(sizeof(Node));
 					node->_underguard = _cookie;
@@ -136,7 +144,7 @@ public:
 				}
 			}
 
-			tpool->_nodeCount = _maxcount;
+			tpool->_nodeCount = _maxCount;
 			tpool->_storedCount = tpool->_nodeCount+tpool->_freeCount;
 
 			TlsSetValue(_tlsIndex, (LPVOID)tpool);
@@ -153,7 +161,6 @@ public:
 				new(&(allocated->_data)) DATA;
 			}
 			tpool->_nodeCount--;
-			tpool->_storedCount--;
 		}
 		//내 노드는 없고 반환하려고 보관해둔 노드가 있다면
 		else if (tpool->_freeCount > 0)
@@ -166,12 +173,11 @@ public:
 				new(&(allocated->_data)) DATA;
 			}
 			tpool->_freeCount--;
-			tpool->_storedCount--;
 		}
 		//공용풀에서 받아와야한다면
 		else
 		{
-			Node* nodebunch = (Node*)_bucketstack.GetBucket();
+			Node* nodebunch = GetBucket();
 			//공용풀에서 노드묶음 받아옴
 			if (nodebunch != nullptr)
 			{
@@ -186,8 +192,7 @@ public:
 				{
 					new(&(allocated->_data)) DATA;
 				}
-				tpool->_nodeCount =  _bunchsize - 1;
-				tpool->_storedCount = tpool->_nodeCount + tpool->_freeCount;
+				tpool->_nodeCount =  _bunchSize - 1;
 			}
 			//공용풀에서도 못 받아왔음
 			else
@@ -199,6 +204,9 @@ public:
 			}
 			
 		}
+		tpool->_storedCount = tpool->_nodeCount + tpool->_freeCount;
+
+		InterlockedIncrement(&_usingCount);
 
 		return &(allocated->_data);
 	}
@@ -238,7 +246,7 @@ public:
 			//생성자 호출한 상태로 들어가야함
 			if (_pnFlag == 0)
 			{
-				for (int i = 0; i < _maxcount; i++)
+				for (int i = 0; i < _maxCount; i++)
 				{
 					Node* node = new Node;
 					node->_underguard = _cookie;
@@ -250,7 +258,7 @@ public:
 			}
 			else//생성자 호출 없이 들어가야함
 			{
-				for (int i = 0; i < _maxcount; i++)
+				for (int i = 0; i < _maxCount; i++)
 				{
 					Node* node = (Node*)malloc(sizeof(Node));
 					node->_underguard = _cookie;
@@ -261,8 +269,8 @@ public:
 				}
 			}
 
-			tpool->_nodeCount = _maxcount;
-			tpool->_storedCount = _maxcount;
+			tpool->_nodeCount = _maxCount;
+			tpool->_storedCount = tpool->_nodeCount + tpool->_freeCount;
 
 			TlsSetValue(_tlsIndex, (LPVOID)tpool);
 		}
@@ -274,12 +282,11 @@ public:
 		}
 
 		//nodelist 자리가 있다면
-		if (tpool->_nodeCount <  _bunchsize)
+		if (tpool->_nodeCount <  _bunchSize)
 		{
 			retnode->_next = tpool->_nodelist;
 			tpool->_nodelist = retnode;
 			tpool->_nodeCount++;
-			tpool->_storedCount++;
 		}
 		//nodelist에 자리가 없다면 freelist로
 		else
@@ -287,17 +294,18 @@ public:
 			retnode->_next = tpool->_freelist;
 			tpool->_freelist = retnode;
 			tpool->_freeCount++;
-			tpool->_storedCount++;
 
 			//freelist가 다 찼다면
-			if (tpool->_freeCount ==  _bunchsize)
+			if (tpool->_freeCount ==  _bunchSize)
 			{
-				_bucketstack.ReturnBucket(tpool->_freelist);
+				ReturnBucket(tpool->_freelist);
 				tpool->_freelist = nullptr;
 				tpool->_freeCount = 0;
 			}
 		}
 		tpool->_storedCount = tpool->_nodeCount + tpool->_freeCount;
+
+		InterlockedDecrement(&_usingCount);
 
 		return true;
 	}
@@ -309,7 +317,7 @@ public:
 	// Parameters: 없음.
 	// Return: (int) 메모리 풀 내부 전체 개수
 	//////////////////////////////////////////////////////////////////////////
-	int	GetCapacityCount(void)
+	int	GetStoredNodeCount(void)
 	{
 		TlsPool* tpool = (TlsPool*)TlsGetValue(_tlsIndex);
 		if (tpool == nullptr)
@@ -319,22 +327,77 @@ public:
 		return tpool->_storedCount;
 	}
 
+	unsigned long long GetBunchCount()
+	{
+		return _bunchCount;
+	}
+
+	unsigned long GetUsingCount()
+	{
+		return _usingCount;
+	}
+
+//Bucket 스택에서 얻어보고 반환할 때 쓰는 함수
+private:
+	void ReturnBucket(Node* nodebunch)
+	{
+		Bunch* bunch = (Bunch*)nodebunch;
+		unsigned long long tagadr = (unsigned long long)bunch;
+		unsigned long long tag = InterlockedIncrement16(&_key);
+		tagadr |= (tag << 48);
+		Bunch* tagbucket = (Bunch*)tagadr;
+		Bunch* oldtop;
+		do
+		{
+			oldtop = _top;
+			bunch->_bunchnext = oldtop;
+		} while (InterlockedCompareExchange64((__int64*)&_top, (__int64)tagbucket, (__int64)oldtop) != (__int64)oldtop);
+		InterlockedIncrement(&_bunchCount);
+	}
+	Node* GetBucket()
+	{
+		Bunch* oldtop;
+		Bunch* newtop;
+		Bunch* realadr;
+		unsigned long long tempadr;
+		Node* retptr;
+		long size = InterlockedDecrement(&_bunchCount);
+		if (size < 0)
+		{
+			InterlockedIncrement(&_bunchCount);
+			return nullptr;
+		}
+
+		do
+		{
+			oldtop = _top;
+			tempadr = (unsigned long long)oldtop;
+			tempadr &= ADRMASK;
+			realadr = (Bunch*)tempadr;
+			newtop = realadr->_bunchnext;
+			retptr = realadr;
+		} while (InterlockedCompareExchange64((__int64*)&_top, (__int64)newtop, (__int64)oldtop) != (__int64)oldtop);
+
+		return retptr;
+	}
 
 private:
-
-
 	int _cookie;
 	long long _position;
 
 	bool _pnFlag;
-	int _maxcount;
+	int _maxCount;
 	bool _maxFlag;
 
-	unsigned int _bunchsize;
+	unsigned int _bunchSize;
 	
-	DWORD _tlsIndex=0;
+	unsigned long _usingCount;
 
-	BucketStack _bucketstack;				//static 노드버킷 관리 스택
+	DWORD _tlsIndex = 0;
+	
+	Bunch* _top;							//Bunch Top
+	unsigned long _bunchCount;				//보관 중인 Bunch개수
+	short _key;								//tag
 };
 
 

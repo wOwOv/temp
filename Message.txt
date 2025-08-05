@@ -1,0 +1,5 @@
+Game
+{
+SC MoveStart(unsigned int id, unsigned char dir, unsigned short x, unsigned short y); 11
+CS Attack1(unsigned int id, unsigned char dir, unsigned short x, unsigned short y); 21
+}
