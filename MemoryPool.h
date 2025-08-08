@@ -3,7 +3,27 @@
 #include <new.h>
 #include <windows.h>
 
+
+/*
+	procademy MemoryPool.
+
+	메모리 풀 클래스 (오브젝트 풀 / 프리리스트)
+	특정 데이타(구조체,클래스,변수)를 일정량 할당 후 나눠쓴다.
+
+	- 사용법.
+
+	procademy::CMemoryPool<DATA> MemPool(300, FALSE);
+	DATA *pData = MemPool.Alloc();
+
+	pData 사용
+
+	MemPool.Free(pData);
+
+
+----------------------------------------------------------------*/
+
 static int key = 0xaaaa;
+
 
 
 
@@ -11,10 +31,6 @@ template <class DATA>
 class MemoryPool
 {
 private:
-	const unsigned long long ADRMASK = 0x0000ffffffffffff;
-	const unsigned long long TAGMASK = 0xffff000000000000;
-	const unsigned long long MAKETAG = 0x0001000000000000;
-
 	struct Node
 	{
 		int _underguard;
@@ -33,21 +49,21 @@ public:
 	//				(bool) Alloc 시 생성자 / Free 시 파괴자 호출 여부
 	// Return:
 	//////////////////////////////////////////////////////////////////////////
-	MemoryPool(int BlockNum, bool PlacementNew = false, bool maxflag = false)
+	MemoryPool(int BlockNum=100, bool PlacementNew = false, bool maxflag = false)
 	{
+		InitializeSRWLock(&_poolLock);
 		_head = nullptr;
 		_cookie = key;
 		key++;
 		_pnFlag = PlacementNew;
 
 		_maxFlag = maxflag;
-
-		_key = 0;
-
+		
 		Node* node = new Node;
 		_position = (long long)&node->_data - (long long)&node->_underguard;
 		delete node;
 
+		AcquireSRWLockExclusive(&_poolLock);
 		//생성자 호출한 상태로 들어가야함
 		if (_pnFlag == 0)
 		{
@@ -77,7 +93,7 @@ public:
 
 		_capacity = BlockNum;
 		_usingCount = 0;
-
+		ReleaseSRWLockExclusive(&_poolLock);
 
 	}
 	virtual	~MemoryPool()
@@ -91,11 +107,8 @@ public:
 			{
 				if (node != nullptr)
 				{
-					unsigned long long tempadr = (unsigned long long)node;
-					tempadr &= ADRMASK;
-					Node* realadr = (Node*)tempadr;
-					temp = realadr->_next;
-					delete realadr;
+					temp = node->_next;
+					delete node;
 					node = temp;
 				}
 				else
@@ -110,11 +123,8 @@ public:
 			{
 				if (node != nullptr)
 				{
-					unsigned long long tempadr = (unsigned long long)node;
-					tempadr &= ADRMASK;
-					Node* realadr = (Node*)tempadr;
-					temp = realadr->_next;
-					free(realadr);
+					temp = node->_next;
+					free(node);
 					node = temp;
 				}
 				else
@@ -134,44 +144,35 @@ public:
 	DATA* Alloc(void)
 	{
 		Node* allocated;
-		Node* oldhead;
-		Node* newhead;
-		Node* realadr;
-		unsigned long long tempadr;
-		do
+		AcquireSRWLockExclusive(&_poolLock);
+		if (_head == nullptr)
 		{
-			oldhead = _head;
-			if (oldhead == nullptr)
+			if (_maxFlag == true)
 			{
-				if (_maxFlag == true)
+				if (_maxcount == _capacity)
 				{
-					if (_maxcount == _capacity)
-					{
-						return nullptr;
-					}
+					ReleaseSRWLockExclusive(&_poolLock);
+					return nullptr;
 				}
-				allocated = new Node;
-				allocated->_underguard = _cookie;
-				allocated->_overguard = _cookie;
-				realadr = allocated;
-				InterlockedIncrement(&_capacity);
-				break;
 			}
-
-			tempadr = (unsigned long long)oldhead;
-			tempadr &= ADRMASK;
-			realadr = (Node*)tempadr;
-			newhead = realadr->_next;
-		} while (InterlockedCompareExchange64((__int64*)&_head, (__int64)newhead, (__int64)oldhead) != (__int64)oldhead);
-		allocated = realadr;
-		//_pnFlag가 1이면 생성자 호출해서 나가야함
-		if (_pnFlag != 0)
+			allocated = new Node;
+			allocated->_underguard = _cookie;
+			allocated->_overguard = _cookie;
+			_capacity++;
+		}
+		else
 		{
-			new(&(allocated->_data)) DATA;
+			allocated = _head;
+			_head= allocated->_next;
+			//_pnFlag가 1이면 생성자 호출해서 나가야함
+			if (_pnFlag != 0)
+			{
+				new(&(allocated->_data)) DATA;
+			}
 		}
 
-		InterlockedIncrement(&_usingCount);
-
+		_usingCount++;
+		ReleaseSRWLockExclusive(&_poolLock);
 		return &(allocated->_data);
 	}
 
@@ -193,7 +194,9 @@ public:
 		{
 			return false;
 		}
-
+		AcquireSRWLockExclusive(&_poolLock);
+		retnode->_next = _head;
+		_head= retnode;
 
 		//_pnFlag가 1이라면 소멸자 호출해서 보관
 		if (_pnFlag != 0)
@@ -201,21 +204,8 @@ public:
 			retnode->_data.~DATA();
 		}
 
-		unsigned long long countnode = (unsigned long long)retnode;
-		countnode &= ADRMASK;
-		Node* oldhead;
-		do
-		{
-			oldhead = _head;
-			unsigned long long tag = (unsigned long long)oldhead;
-			tag &= TAGMASK;
-			tag += MAKETAG;
-			countnode |= tag;
-			retnode->_next = oldhead;
-		} while (InterlockedCompareExchange64((__int64*)&_head, (__int64)countnode, (__int64)oldhead) != (__int64)oldhead);
-
-		InterlockedDecrement(&_usingCount);
-
+		_usingCount--;
+		ReleaseSRWLockExclusive(&_poolLock);
 		return true;
 	}
 
@@ -228,7 +218,7 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 	int	GetCapacityCount(void)
 	{
-		return _capacity;
+	return _capacity;
 	}
 
 	//////////////////////////////////////////////////////////////////////////
@@ -239,7 +229,7 @@ public:
 	//////////////////////////////////////////////////////////////////////////
 	int	GetUseCount(void)
 	{
-		return _usingCount;
+	return _usingCount;
 	}
 
 
@@ -248,14 +238,15 @@ public:
 		_maxcount = maxcount;
 	}
 
-	// 스택 방식으로 반환된 (미사용) 오브젝트 블럭을 관리.
 
+
+	// 스택 방식으로 반환된 (미사용) 오브젝트 블럭을 관리.
 
 private:
 	Node* _head;
-	unsigned long _cookie;
-	unsigned long _capacity;
-	unsigned long _usingCount;
+	int _cookie;
+	int _capacity;
+	int _usingCount;
 	bool _pnFlag;
 
 	long long _position;
@@ -263,8 +254,7 @@ private:
 	int _maxcount;
 	bool _maxFlag;
 
-	short _key;
-
+	SRWLOCK _poolLock;
 };
 
 
@@ -275,5 +265,6 @@ private:
 
 
 
+
+
 #endif
-#pragma once

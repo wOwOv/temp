@@ -1,0 +1,171 @@
+#ifndef __LOCKFREEQUEUE__
+#define __LOCKFREEQUEUE__
+
+#include "TlsMemoryPool.h"
+
+template <class DATA>
+class LFQueue
+{
+private:
+
+	friend class LanServer;
+	friend class NetServer;
+	friend class CoreServer;
+
+
+	const unsigned long long ADRMASK = 0x0000ffffffffffff;
+	const unsigned long long TAGMASK = 0xffff000000000000;
+	const unsigned long long MAKETAG = 0x0001000000000000;
+
+	struct Node
+	{
+		DATA _data;
+		Node* _next;
+	};
+
+public:
+	LFQueue()
+	{
+		Node* dummy = _nodepool.Alloc();
+		dummy->_next = nullptr;
+		_head = dummy;
+		_tail = dummy;
+	}
+	~LFQueue()
+	{
+		while (_head->_next != nullptr)
+		{
+			Node* next = _head->_next;
+
+			unsigned long long realadr = (unsigned long long)_head & ADRMASK;
+			delete (Node*)realadr;
+			_head = next;
+		}
+	}
+	void Enqueue(DATA data)
+	{
+		Node* newnode = _nodepool.Alloc();
+		newnode->_data = data;
+		newnode->_next = nullptr;
+		unsigned long long tagnode = (unsigned long long)newnode;
+
+		Node* oldtail;
+		Node* realadr;
+		do
+		{
+			while (1)
+			{
+				oldtail = _tail;
+				unsigned long long tag = (unsigned long long) oldtail;
+
+				tag &= TAGMASK;
+				tag += MAKETAG;
+				tagnode |= tag;
+
+				unsigned long long tempadr = (unsigned long long)oldtail;
+				tempadr &= ADRMASK;
+				realadr = (Node*)tempadr;
+				if (realadr->_next != nullptr)
+				{
+					InterlockedCompareExchange64((__int64*)&_tail, (__int64)realadr->_next, (__int64)oldtail);
+				}
+				else
+				{
+					break;
+				}
+			}
+		} while (InterlockedCompareExchange64((__int64*)&realadr->_next, (__int64)tagnode, (__int64)nullptr) != (__int64)nullptr);
+		InterlockedIncrement(&_size);
+		InterlockedCompareExchange64((__int64*)&_tail, (_int64)tagnode, (__int64)oldtail);
+
+
+	}
+
+	bool Dequeue(DATA* data)
+	{
+		Node* oldhead = nullptr;
+		Node* newhead = nullptr;
+		Node* realadr = nullptr;
+		unsigned long long tempadr;
+		unsigned long long tempadr2;
+
+		long qsize = InterlockedDecrement(&_size);
+		if (qsize < 0)
+		{
+			InterlockedIncrement(&_size);
+			return false;
+		}
+
+		do
+		{
+			while (1)
+			{
+				Node* oldtail;
+				Node* tailadr;
+
+				oldtail = _tail;
+				unsigned long long tempadr = (unsigned long long)oldtail;
+				tempadr &= ADRMASK;
+				tailadr = (Node*)tempadr;
+				if (tailadr->_next == nullptr)
+				{
+					break;
+				}
+				InterlockedCompareExchange64((__int64*)&_tail, (__int64)tailadr->_next, (__int64)oldtail);
+			}
+
+			do
+			{
+				oldhead = _head;
+				tempadr = (unsigned long long)oldhead;
+				tempadr &= ADRMASK;
+				realadr = (Node*)tempadr;
+				newhead = realadr->_next;
+			} while (newhead == nullptr);
+
+			tempadr2 = (unsigned long long)newhead;
+			tempadr2 &= ADRMASK;
+			Node* datanode = (Node*)tempadr2;
+			*data = datanode->_data;
+		} while (InterlockedCompareExchange64((__int64*)&_head, (__int64)newhead, (__int64)oldhead) != (__int64)oldhead);
+
+		while (1)
+		{
+			Node* oldtail;
+			Node* tailadr;
+
+			oldtail = _tail;
+			unsigned long long tempadr = (unsigned long long)oldtail;
+			tempadr &= ADRMASK;
+			tailadr = (Node*)tempadr;
+			if (tailadr->_next == nullptr)
+			{
+				break;
+			}
+			InterlockedCompareExchange64((__int64*)&_tail, (__int64)tailadr->_next, (__int64)oldtail);
+		}
+
+
+		_nodepool.Free(realadr);
+
+		return true;
+	}
+	long GetUsedSize()
+	{
+		return _size;
+	}
+
+private:
+	Node* _head;
+	Node* _tail;
+	static TlsMemoryPool<Node> _nodepool;
+
+	long _size = 0;
+};
+
+template <class DATA>
+TlsMemoryPool<typename LFQueue<DATA>::Node> LFQueue<DATA>::_nodepool(100, 500);
+
+
+
+#endif

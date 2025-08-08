@@ -1,0 +1,16 @@
+LanServer_Config
+{
+IP:0.0.0.0
+Port:6000
+WorkerThreadCreate:8
+WorekrThreadRunning:1
+Nagle:1
+Max:1000
+}
+
+IP: 바인드할 ip
+Port: 바인드할 포트
+WorkerThreadCreate: 생성할 워커스레드 수
+WorkerThreadRunning: concurrentthreads수 정할 때 논리프로세서에서 뺄 수
+Nagle: 0-끄기 1-켜기
+Max: 최대 접속자 수
